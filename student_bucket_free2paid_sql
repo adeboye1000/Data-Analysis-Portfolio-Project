@@ -1,0 +1,175 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- CTE 1: table_period_to_consider
+-- Purpose:
+--   Define the observation window for each student.
+--   Logic:
+--     - Free users: from registration date until a fixed cutoff date
+--     - Paid users: from registration date until first purchase date
+--   This isolates pre-conversion engagement for paid users.
+-- =========================================================
+WITH table_period_to_consider AS (
+
+    -- -------------------------
+    -- Free users (no purchases)
+    -- -------------------------
+    SELECT 
+        i.student_id,
+        i.date_registered,
+        0 AS paid,
+        '2022-10-31' AS last_date_to_watch     -- Global cutoff for free users
+    FROM student_info i
+    LEFT JOIN student_purchases p USING (student_id)
+    WHERE p.student_id IS NULL
+
+    UNION
+
+    -- -------------------------
+    -- Paid users (before first purchase)
+    -- -------------------------
+    SELECT 
+        i.student_id,
+        i.date_registered,
+        1 AS paid,
+        MIN(date_purchased) AS last_date_to_watch
+    FROM student_info i
+    JOIN student_purchases p USING (student_id)
+    GROUP BY p.student_id
+),
+
+-- =========================================================
+-- CTE 2: table_minutes_summed_1
+-- Purpose:
+--   Calculate total minutes watched per student
+--   within the defined observation window.
+--   Handles students with and without learning activity.
+-- =========================================================
+table_minutes_summed_1 AS (
+
+    -- --------------------------------
+    -- Students with no learning data
+    -- --------------------------------
+    SELECT 
+        p.*,
+        0 AS total_minutes_watched
+    FROM table_period_to_consider p
+    LEFT JOIN student_learning l USING (student_id)
+    WHERE l.student_id IS NULL
+
+    UNION
+
+    -- --------------------------------
+    -- Students with learning activity
+    -- within the observation window
+    -- --------------------------------
+    SELECT 
+        p.*,
+        ROUND(SUM(l.minutes_watched), 2) AS total_minutes_watched
+    FROM table_period_to_consider p
+    JOIN student_learning l USING (student_id)
+    WHERE l.date_watched BETWEEN p.date_registered AND p.last_date_to_watch
+    GROUP BY l.student_id
+),
+
+-- =========================================================
+-- CTE 3: table_minutes_summed_2
+-- Purpose:
+--   Capture remaining edge cases:
+--   Students who have learning activity, but none
+--   within the defined observation window.
+-- =========================================================
+table_minutes_summed_2 AS (
+
+    -- Keep all previously computed rows
+    SELECT *
+    FROM table_minutes_summed_1
+
+    UNION
+
+    -- Add students whose learning activity exists
+    -- but falls entirely outside the observation window
+    SELECT 
+        p.*,
+        0 AS total_minutes_watched
+    FROM table_period_to_consider p
+    JOIN student_learning l USING (student_id)
+    WHERE l.date_watched NOT BETWEEN p.date_registered AND p.last_date_to_watch
+      AND l.student_id NOT IN (
+            SELECT student_id
+            FROM table_minutes_summed_1
+        )
+    GROUP BY l.student_id
+),
+
+-- =========================================================
+-- CTE 4: table_distribute_to_buckets
+-- Purpose:
+--   Segment students into engagement buckets based
+--   on total minutes watched during the observation window.
+--   Buckets are uneven to capture long-tail behavior.
+-- =========================================================
+table_distribute_to_buckets AS (
+    SELECT 
+        *,
+        CASE
+            -- No engagement
+            WHEN total_minutes_watched = 0
+                 OR total_minutes_watched IS NULL THEN '[0]'
+
+            -- Low engagement buckets
+            WHEN total_minutes_watched <= 5 THEN '(0, 5]'
+            WHEN total_minutes_watched <= 10 THEN '(5, 10]'
+            WHEN total_minutes_watched <= 15 THEN '(10, 15]'
+            WHEN total_minutes_watched <= 20 THEN '(15, 20]'
+            WHEN total_minutes_watched <= 25 THEN '(20, 25]'
+            WHEN total_minutes_watched <= 30 THEN '(25, 30]'
+            WHEN total_minutes_watched <= 40 THEN '(30, 40]'
+            WHEN total_minutes_watched <= 50 THEN '(40, 50]'
+            WHEN total_minutes_watched <= 60 THEN '(50, 60]'
+            WHEN total_minutes_watched <= 70 THEN '(60, 70]'
+            WHEN total_minutes_watched <= 80 THEN '(70, 80]'
+            WHEN total_minutes_watched <= 90 THEN '(80, 90]'
+            WHEN total_minutes_watched <= 100 THEN '(90, 100]'
+            WHEN total_minutes_watched <= 110 THEN '(100, 110]'
+            WHEN total_minutes_watched <= 120 THEN '(110, 120]'
+
+            -- Medium to high engagement buckets
+            WHEN total_minutes_watched <= 240 THEN '(120, 240]'
+            WHEN total_minutes_watched <= 480 THEN '(240, 480]'
+            WHEN total_minutes_watched <= 1000 THEN '(480, 1000]'
+            WHEN total_minutes_watched <= 2000 THEN '(1000, 2000]'
+            WHEN total_minutes_watched <= 3000 THEN '(2000, 3000]'
+            WHEN total_minutes_watched <= 4000 THEN '(3000, 4000]'
+            WHEN total_minutes_watched <= 6000 THEN '(4000, 6000]'
+
+            -- Extreme outliers
+            ELSE '6000+'
+        END AS buckets
+    FROM table_minutes_summed_2
+)
+
+-- =========================================================
+-- Final Output:
+--   Student-level pre-conversion engagement segmentation
+--   f2p = 0 → free users
+--   f2p = 1 → users who eventually converted
+-- =========================================================
+SELECT  
+    student_id,
+    date_registered,
+    paid AS f2p,
+    total_minutes_watched,
+    buckets
+FROM table_distribute_to_buckets;
+
+
+-- =========================================================
+-- Debug / validation queries (not part of final logic)
+-- Purpose:
+--   Inspect specific student records during development
+-- =========================================================
+SELECT * FROM purchases_info WHERE student_id = 275430;
+SELECT * FROM student_purchases WHERE student_id = 263338;
+SELECT * FROM student_info WHERE student_id = 258832;
