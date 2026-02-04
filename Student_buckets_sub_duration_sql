@@ -1,0 +1,141 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- CTE 1: table_paid_duration
+-- Purpose:
+--   Define the paid subscription window per student.
+--   Logic:
+--     - first_paid_day: first time the student became paid
+--     - last_paid_day: end of paid access, capped at analysis cutoff
+-- =========================================================
+WITH table_paid_duration AS (
+    SELECT 
+        student_id,
+        MIN(date_start) AS first_paid_day,
+
+        -- Cap the paid period at the global cutoff date
+        IF(
+            MAX(date_end) <= '2022-10-31',
+            MAX(date_end),
+            '2022-10-31'
+        ) AS last_paid_day
+    FROM purchases_info
+    GROUP BY student_id
+),
+
+-- =========================================================
+-- CTE 2: table_content_watched_1
+-- Purpose:
+--   Calculate total minutes watched during the paid period.
+--   Includes students with no learning activity.
+-- =========================================================
+table_content_watched_1 AS (
+
+    -- -----------------------------------------
+    -- Students with learning activity in period
+    -- -----------------------------------------
+    SELECT 
+        d.*,
+        ROUND(SUM(l.minutes_watched), 2) AS total_minutes_watched
+    FROM table_paid_duration d
+    JOIN student_learning l USING (student_id)
+    WHERE l.date_watched BETWEEN d.first_paid_day AND d.last_paid_day
+    GROUP BY d.student_id
+
+    UNION
+
+    -- -----------------------------------------
+    -- Students with no learning records at all
+    -- -----------------------------------------
+    SELECT 
+        d.*,
+        0 AS total_minutes_watched
+    FROM table_paid_duration d
+    LEFT JOIN student_learning l USING (student_id)
+    WHERE l.student_id IS NULL
+),
+
+-- =========================================================
+-- CTE 3: table_content_watched_2
+-- Purpose:
+--   Handle edge cases:
+--   Students who have learning activity, but none
+--   during their paid period.
+-- =========================================================
+table_content_watched_2 AS (
+
+    -- Preserve previously computed rows
+    SELECT *
+    FROM table_content_watched_1
+
+    UNION 
+
+    -- Add students whose learning activity
+    -- occurred only outside the paid window
+    SELECT 
+        d.*,
+        0 AS total_minutes_watched
+    FROM table_paid_duration d
+    JOIN student_learning l USING (student_id)
+    WHERE l.date_watched NOT BETWEEN d.first_paid_day AND d.last_paid_day
+      AND l.student_id NOT IN (
+            SELECT student_id
+            FROM table_content_watched_1
+        )
+),
+
+-- =========================================================
+-- CTE 4: table_duration_in_days
+-- Purpose:
+--   Compute length of paid access in days.
+-- =========================================================
+table_duration_in_days AS (
+    SELECT 
+        *,
+        DATEDIFF(last_paid_day, first_paid_day) AS difference_in_days
+    FROM table_content_watched_2
+),
+
+-- =========================================================
+-- CTE 5: table_distribute_to_buckets
+-- Purpose:
+--   Segment paid users by total minutes watched
+--   during their paid period.
+-- =========================================================
+table_distribute_to_buckets AS (
+    SELECT 
+        d.*,
+        i.date_registered,
+
+        -- Engagement buckets for paid users
+        CASE
+            WHEN total_minutes_watched = 0
+                 OR total_minutes_watched IS NULL THEN '[0]'
+            WHEN total_minutes_watched <= 30 THEN '(0, 30]'
+            WHEN total_minutes_watched <= 60 THEN '(30, 60]'
+            WHEN total_minutes_watched <= 120 THEN '(60, 120]'
+            WHEN total_minutes_watched <= 240 THEN '(120, 240]'
+            WHEN total_minutes_watched <= 480 THEN '(240, 480]'
+            WHEN total_minutes_watched <= 1000 THEN '(480, 1000]'
+            WHEN total_minutes_watched <= 2000 THEN '(1000, 2000]'
+            WHEN total_minutes_watched <= 3000 THEN '(2000, 3000]'
+            WHEN total_minutes_watched <= 4000 THEN '(3000, 4000]'
+            WHEN total_minutes_watched <= 6000 THEN '(4000, 6000]'
+            ELSE '6000+'
+        END AS user_buckets
+    FROM table_duration_in_days d
+    JOIN student_info i USING (student_id)
+)
+
+-- =========================================================
+-- Final Output:
+--   Paid-user engagement during subscription period
+-- =========================================================
+SELECT 
+    student_id,
+    date_registered,
+    total_minutes_watched,
+    difference_in_days AS num_paid_days,
+    user_buckets AS buckets
+FROM table_distribute_to_buckets;
