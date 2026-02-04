@@ -1,5 +1,3 @@
-# Data-Analysis-Portfolio-Project
-
 # Student Engagement and Retention Analysis – 365 Data Science
 # Project context
 Personal data analysis project examining student engagement, retention, learning behaviour, and conversion on the 365 Data Science online learning platform. The project targets general stakeholders and decision-makers interested in product performance, user behaviour, and growth strategy.
