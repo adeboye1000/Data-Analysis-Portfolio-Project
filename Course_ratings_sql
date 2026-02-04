@@ -1,0 +1,14 @@
+-- Select the working database
+USE customer_engagement;
+
+-- Retrieve the course_rating column from the course_ratings table
+-- Purpose:
+--   Extract individual rating values assigned to courses.
+-- Notes:
+--   - No filtering, aggregation, or joins are applied.
+--   - Each row represents a single rating record.
+--   - The result may include NULLs if unrated entries exist.
+SELECT 
+    course_rating
+FROM
+    course_ratings;
