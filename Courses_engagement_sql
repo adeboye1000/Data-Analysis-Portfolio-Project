@@ -1,0 +1,95 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- CTE 1: table_overall_minutes
+-- Purpose:
+--   Aggregate total learning engagement per course.
+--   Calculates:
+--     - Total minutes watched across all students
+--     - Number of distinct students who watched the course
+-- =========================================================
+WITH table_overall_minutes AS (
+    SELECT 
+        i.*,                                   -- Course metadata (id, title, duration, etc.)
+        ROUND(SUM(l.minutes_watched), 2) AS minutes_watched,
+                                                -- Total minutes watched per course
+        COUNT(DISTINCT l.student_id) AS students_watched
+                                                -- Number of unique students who watched the course
+    FROM course_info i
+    JOIN student_learning l USING (course_id)   -- Link learning activity to course metadata
+    GROUP BY course_id                          -- Aggregate at course level
+),
+
+-- =========================================================
+-- CTE 2: table_minutes_per_student_and_completion_rate
+-- Purpose:
+--   Derive per-student engagement and completion metrics.
+--   Calculates:
+--     - Average minutes watched per student
+--     - Estimated completion rate based on course duration
+-- =========================================================
+table_minutes_per_student_and_completion_rate AS (
+    SELECT 
+        course_id,
+        course_title,
+        minutes_watched,
+
+        -- Average minutes watched per student
+        ROUND(minutes_watched / students_watched, 2) AS minutes_per_student,
+
+        -- Completion rate approximation:
+        -- (average minutes watched per student) / (total course duration)
+        ROUND(
+            (minutes_watched / students_watched) / course_duration,
+            2
+        ) AS completion_rate
+    FROM table_overall_minutes
+)
+
+-- =========================================================
+-- Final Output (CTE-based version)
+--   Returns engagement and completion metrics per course
+-- =========================================================
+SELECT *
+FROM table_minutes_per_student_and_completion_rate;
+
+
+-- =========================================================
+-- Equivalent query without CTEs
+-- Purpose:
+--   Produces the same output as above, written as a subquery.
+--   Useful for comparison or environments without CTE support.
+-- =========================================================
+SELECT 
+    course_id,
+    course_title,
+    minutes_watched,
+
+    -- Average minutes watched per student
+    ROUND(minutes_watched / students_watched, 2) AS minutes_per_student,
+
+    -- Completion rate approximation
+    ROUND(
+        (minutes_watched / students_watched) / course_duration,
+        2
+    ) AS completion_rate
+FROM (
+    SELECT 
+        i.*,                                   -- Course metadata
+        ROUND(SUM(l.minutes_watched), 2) AS minutes_watched,
+        COUNT(DISTINCT l.student_id) AS students_watched
+    FROM course_info i
+    JOIN student_learning l USING (course_id)
+    GROUP BY course_id
+) a;
+
+
+-- =========================================================
+-- Diagnostic query
+-- Purpose:
+--   Inspect raw student-level learning activity.
+--   Typically used for validation or debugging.
+-- =========================================================
+SELECT *
+FROM student_learning;
