@@ -1,0 +1,82 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- Purpose:
+--   Determine whether each daily engagement event occurred
+--   while the student had an active paid subscription.
+--   Output is aggregated to one row per student per day.
+-- =========================================================
+SELECT 
+    student_id,
+    date_engaged,
+
+    -- paid flag:
+    -- 1 = at least one active subscription on that engagement date
+    -- 0 = no active subscription on that date
+    MAX(paid) AS paid
+FROM (
+
+    -- -----------------------------------------------------
+    -- Join engagement events with purchase periods
+    -- and evaluate paid status at the engagement date
+    -- -----------------------------------------------------
+    SELECT 
+        e.student_id,
+        e.date_engaged,
+        p.date_start,
+        p.date_end,
+
+        -- Determine paid status on the engagement date
+        CASE
+            -- Student has never purchased
+            WHEN p.date_start IS NULL AND p.date_end IS NULL THEN 0
+
+            -- Engagement occurred during an active subscription
+            WHEN e.date_engaged BETWEEN p.date_start AND p.date_end THEN 1
+
+            -- Engagement occurred outside subscription window
+            WHEN e.date_engaged NOT BETWEEN p.date_start AND p.date_end THEN 0
+        END AS paid
+    FROM student_engagement e
+
+    -- Left join ensures free users are retained
+    LEFT JOIN purchases_info p USING (student_id)
+) a
+
+-- Aggregate to handle multiple purchase periods per student
+-- Ensures one record per student per engagement date
+GROUP BY student_id, date_engaged;
+
+
+-- =========================================================
+-- Validation query (student-level inspection)
+-- Purpose:
+--   Inspect raw paid-flag logic for a specific student
+-- =========================================================
+SELECT 
+    e.student_id,
+    e.date_engaged,
+    p.date_start,
+    p.date_end,
+    CASE
+        WHEN p.date_start IS NULL AND p.date_end IS NULL THEN 0
+        WHEN e.date_engaged BETWEEN p.date_start AND p.date_end THEN 1
+        WHEN e.date_engaged NOT BETWEEN p.date_start AND p.date_end THEN 0
+    END AS paid
+FROM student_engagement e
+LEFT JOIN purchases_info p USING (student_id)
+WHERE e.student_id = 262643;
+
+
+-- =========================================================
+-- Additional debug queries
+-- Purpose:
+--   Cross-check raw purchase data and derived intervals
+-- =========================================================
+SELECT *
+FROM student_purchases
+WHERE student_id = 262643;
+
+SELECT *
+FROM purchases_info;
