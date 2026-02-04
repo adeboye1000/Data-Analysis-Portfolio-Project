@@ -1,0 +1,254 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- CTE 1: table_course_exams
+-- Purpose:
+--   Identify all course-level exams that students have attempted.
+--   exam_category = 2 represents course exams.
+-- Output:
+--   One row per student per course where a course exam exists.
+-- =========================================================
+WITH table_course_exams AS (
+    SELECT DISTINCT
+        se.student_id,
+        e.course_id
+    FROM student_exams se
+    JOIN exam_info e USING (exam_id)
+    WHERE e.exam_category = 2
+),
+
+-- =========================================================
+-- CTE 2: table_course_certificates
+-- Purpose:
+--   Capture all issued course certificates.
+--   certificate_type = 1 represents course certificates.
+-- Output:
+--   One row per student per course with a certificate.
+-- =========================================================
+table_course_certificates AS (
+    SELECT DISTINCT
+        student_id,
+        course_id
+    FROM student_certificates
+    WHERE certificate_type = 1
+),
+
+-- =========================================================
+-- CTE 3: table_attempted_course_exam_certificate_issued
+-- Purpose:
+--   For each student-track enrollment:
+--     - Determine whether the student attempted any course exam
+--     - Determine whether a course certificate was issued
+--   Aggregation is done at the student + track level.
+-- =========================================================
+table_attempted_course_exam_certificate_issued AS (
+    SELECT 
+        student_id,
+        enrolled_in_track_id,
+
+        -- Flag: student attempted at least one course exam in the track
+        MAX(attempted_course_exam) AS attempted_course_exam,
+
+        -- Flag: student earned at least one course certificate in the track
+        MAX(certificate_course_id) AS certificate_course_id
+    FROM (
+
+        -- -------------------------------------------------
+        -- Derive course certificate completion per course
+        -- -------------------------------------------------
+        SELECT 
+            c.*,
+
+            -- Certificate logic:
+            -- 0 = no certificate issued
+            -- 1 = certificate issued AND course exam was attempted
+            CASE
+                WHEN cc.course_id IS NULL THEN 0
+                WHEN cc.course_id IS NOT NULL AND c.attempted_course_exam = 0 THEN 0
+                WHEN cc.course_id IS NOT NULL AND c.attempted_course_exam = 1 THEN 1
+            END AS certificate_course_id
+        FROM (
+
+            -- ---------------------------------------------
+            -- Determine whether a course exam was attempted
+            -- ---------------------------------------------
+            SELECT 
+                a.student_id,
+                a.track_id AS enrolled_in_track_id,
+                a.course_id,
+                b.track_id,
+
+                -- attempted_course_exam logic:
+                -- 0 = no course exam attempt
+                -- 1 = course exam attempted AND course belongs to the track
+                CASE
+                    WHEN a.course_id IS NULL THEN 0
+                    WHEN a.course_id IS NOT NULL AND b.track_id IS NULL THEN 0
+                    WHEN a.course_id IS NOT NULL AND b.track_id IS NOT NULL THEN 1
+                END AS attempted_course_exam
+            FROM (
+
+                -- -----------------------------------------
+                -- Combine track enrollments with course exams
+                -- -----------------------------------------
+                SELECT DISTINCT *
+                FROM student_career_track_enrollments en
+                LEFT JOIN table_course_exams ex USING (student_id)
+                ORDER BY student_id, track_id, course_id
+            ) a
+
+            -- Validate that the course belongs to the enrolled track
+            LEFT JOIN career_track_info b
+                ON a.track_id = b.track_id
+               AND a.course_id = b.course_id
+        ) c
+
+        -- Join issued course certificates
+        LEFT JOIN table_course_certificates cc
+            ON c.student_id = cc.student_id
+           AND c.course_id = cc.course_id
+    ) d
+
+    -- Aggregate to student-track level
+    GROUP BY student_id, enrolled_in_track_id
+),
+
+-- =========================================================
+-- CTE 4: table_track_exams
+-- Purpose:
+--   Identify all final (track-level) exams attempted.
+--   exam_category = 3 represents final exams.
+-- Output:
+--   One row per student per track where a final exam exists.
+-- =========================================================
+table_track_exams AS (
+    SELECT DISTINCT
+        se.student_id,
+        e.track_id
+    FROM student_exams se
+    JOIN exam_info e USING (exam_id)
+    WHERE e.exam_category = 3
+),
+
+-- =========================================================
+-- CTE 5: table_attempted_final_exam
+-- Purpose:
+--   Attach final exam attempts to each student-track enrollment.
+-- =========================================================
+table_attempted_final_exam AS (
+    SELECT DISTINCT
+        i.*,
+        ex.track_id AS attempted_track_id
+    FROM table_attempted_course_exam_certificate_issued i
+    LEFT JOIN table_track_exams ex
+        ON i.student_id = ex.student_id
+       AND i.enrolled_in_track_id = ex.track_id
+),
+
+-- =========================================================
+-- CTE 6: table_certificates
+-- Purpose:
+--   Capture issued career track certificates.
+--   certificate_type = 2 represents track certificates.
+-- =========================================================
+table_certificates AS (
+    SELECT 
+        student_id,
+        track_id,
+        CAST(date_issued AS DATE) AS date_issued
+    FROM student_certificates
+    WHERE certificate_type = 2
+),
+
+-- =========================================================
+-- CTE 7: table_issued_certificates
+-- Purpose:
+--   Attach issued career track certificates to each enrollment.
+-- =========================================================
+table_issued_certificates AS (
+    SELECT DISTINCT
+        e.*,
+        c.track_id AS certificate_track_id,
+        c.date_issued
+    FROM table_attempted_final_exam e
+    LEFT JOIN table_certificates c
+        ON e.student_id = c.student_id
+       AND e.enrolled_in_track_id = c.track_id
+),
+
+-- =========================================================
+-- CTE 8: table_final
+-- Purpose:
+--   Aggregate funnel metrics per track.
+--   (Not used in final output, but useful for analysis.)
+-- =========================================================
+table_final AS (
+    SELECT 
+        enrolled_in_track_id AS track_id,
+        COUNT(enrolled_in_track_id) AS enrolled_in_track_id,
+        SUM(attempted_course_exam) AS attempted_course_exam,
+        SUM(certificate_course_id) AS certificate_course_id,
+        COUNT(attempted_track_id) AS attempted_track_id,
+        COUNT(certificate_track_id) AS certificate_track_id
+    FROM table_issued_certificates
+    GROUP BY enrolled_in_track_id
+),
+
+-- =========================================================
+-- CTE 9: table_reordered
+-- Purpose:
+--   Reshape the funnel metrics into a vertical format:
+--   One row per action per track (suitable for visualization).
+-- =========================================================
+table_reordered AS (
+    SELECT 
+        'Enrolled in a track' AS action,
+        enrolled_in_track_id AS track,
+        COUNT(enrolled_in_track_id) AS count
+    FROM table_issued_certificates
+    GROUP BY enrolled_in_track_id
+
+    UNION
+
+    SELECT 
+        'Attempted a course exam',
+        enrolled_in_track_id,
+        SUM(attempted_course_exam)
+    FROM table_issued_certificates
+    GROUP BY enrolled_in_track_id
+
+    UNION
+
+    SELECT 
+        'Completed a course exam',
+        enrolled_in_track_id,
+        SUM(certificate_course_id)
+    FROM table_issued_certificates
+    GROUP BY enrolled_in_track_id
+
+    UNION
+
+    SELECT 
+        'Attempted a final exam',
+        enrolled_in_track_id,
+        COUNT(attempted_track_id)
+    FROM table_issued_certificates
+    GROUP BY enrolled_in_track_id
+
+    UNION
+
+    SELECT 
+        'Earned a career track certificate',
+        enrolled_in_track_id,
+        COUNT(certificate_track_id)
+    FROM table_issued_certificates
+    GROUP BY enrolled_in_track_id
+)
+
+-- =========================================================
+-- Final Output:
+--   Funnel-style counts per track and action
+-- =========================================================
+SELECT *
+FROM table_reordered;
