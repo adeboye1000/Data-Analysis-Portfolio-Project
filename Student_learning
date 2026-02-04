@@ -1,0 +1,72 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- Purpose:
+--   Produce a daily, per-student learning summary enriched
+--   with a paid/free flag at the day level.
+--   Output granularity: one row per student per day.
+-- =========================================================
+SELECT c.*
+FROM (
+
+    -- =====================================================
+    -- Aggregate total minutes watched per student per day
+    -- =====================================================
+    SELECT 
+        student_id,
+        date_watched,
+        SUM(minutes_watched) AS minutes_watched,
+
+        -- paid flag:
+        -- 1 = student had an active subscription on that day
+        -- 0 = student did not have an active subscription
+        paid
+    FROM (
+
+        -- =================================================
+        -- Collapse multiple purchase periods into a single
+        -- paid/free flag per student per day
+        -- =================================================
+        SELECT 
+            student_id,
+            date_watched,
+            minutes_watched,
+            MAX(paid) AS paid
+        FROM (
+
+            -- ---------------------------------------------
+            -- Join learning events with purchase windows
+            -- and evaluate paid status at the watch date
+            -- ---------------------------------------------
+            SELECT 
+                l.student_id,
+                l.date_watched,
+                l.minutes_watched,
+                p.date_start,
+                p.date_end,
+
+                -- Determine paid status on the watch date
+                CASE
+                    -- Student has never purchased
+                    WHEN p.date_start IS NULL AND p.date_end IS NULL THEN 0
+
+                    -- Learning occurred during an active subscription
+                    WHEN l.date_watched BETWEEN p.date_start AND p.date_end THEN 1
+
+                    -- Learning occurred outside subscription window
+                    WHEN l.date_watched NOT BETWEEN p.date_start AND p.date_end THEN 0
+                END AS paid
+            FROM student_learning l
+
+            -- Left join ensures free users are retained
+            LEFT JOIN purchases_info p USING (student_id)
+        ) a
+
+        -- Aggregate to handle multiple purchase periods
+        GROUP BY student_id, date_watched
+    ) b
+
+    -- Aggregate to daily student level
+    GROUP BY student_id, date_watched
+) c;
