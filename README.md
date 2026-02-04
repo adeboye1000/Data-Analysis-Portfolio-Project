@@ -9,9 +9,13 @@ The platform aims to increase daily student engagement and improve conversion fr
 Real behavioural data from 365 Data Science covering January 2022 to October 2022. The dataset includes student engagement events, learning activity, subscriptions, exams, certificates, course metrics, and career track progression across multiple relational tables.
 # Definitions and metrics
 Engagement: Any lecture, quiz, or exam interaction
+
 Onboarding: First recorded engagement after registration
+
 Completion rate: Minutes watched divided by course length
+
 Free-plan user: No paid subscription
+
 Paying user: Active monthly, quarterly, or annual subscription
 # Methodology
 SQL was used for data cleaning, transformation, aggregation, and feature engineering. Tableau was used to build a five-page interactive dashboard featuring KPIs, time-series analysis, cohort tables, retention curves, and funnel analysis.
@@ -19,14 +23,21 @@ SQL was used for data cleaning, transformation, aggregation, and feature enginee
 Initial analysis focused on onboarding rates, engagement trends over time, differences between free and paid users, learning intensity, exam activity, and certificate issuance.
 # Key Insights
 Daily engagement increased steadily throughout 2022, reaching ~400 active users per day by October
+
 Free users dominate engagement, but conversion increases sharply after 1–2 hours of content consumption
+
 Gamification and marketing campaigns significantly improved onboarding and engagement
+
 Paid users show strong early retention, stabilising at ~30% over time
+
 Career track completion rates are low, with major drop-off before the first exam
 # Recommendations
 Introduce guided onboarding with personalised course recommendations
+
 Test limited-time full-access trials for new users
+
 Retarget newly registered users within their first 30 days
+
 Expand gamification and social learning features
 # Visual assets
 Tableau Public – Student Engagement Dashboard  
