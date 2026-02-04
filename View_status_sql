@@ -1,0 +1,79 @@
+-- Select the working database
+USE customer_engagement;
+
+-- =========================================================
+-- Purpose:
+--   Create a normalized view of purchase periods per student.
+--   The view standardizes subscription start and end dates,
+--   accounting for refunds and subscription duration.
+-- =========================================================
+
+-- Remove the view if it already exists
+DROP VIEW IF EXISTS purchases_info;
+
+-- ---------------------------------------------------------
+-- Create the purchases_info view
+-- ---------------------------------------------------------
+CREATE VIEW purchases_info AS
+SELECT 
+    purchase_id,                  -- Unique purchase identifier
+    student_id,                   -- Student who made the purchase
+    purchase_type,                -- Subscription plan type
+    date_start,                   -- Subscription start date
+
+    -- Effective subscription end date:
+    --   - date_refunded if refunded early
+    --   - otherwise calculated subscription end
+    IF(
+        date_refunded IS NULL,
+        date_end,
+        date_refunded
+    ) AS date_end
+FROM (
+
+    -- -----------------------------------------------------
+    -- Derive subscription start and nominal end dates
+    -- -----------------------------------------------------
+    SELECT 
+        purchase_id,
+        student_id,
+        purchase_type,
+
+        -- Subscription starts on purchase date
+        date_purchased AS date_start,
+
+        -- Calculate nominal subscription end date
+        -- based on purchase type:
+        --   0 = 1-month plan
+        --   1 = 3-month plan
+        --   2 = 12-month plan
+        CASE
+            WHEN purchase_type = 0 THEN
+                DATE_ADD(
+                    MAKEDATE(YEAR(date_purchased), DAY(date_purchased)),
+                    INTERVAL MONTH(date_purchased) MONTH
+                )
+            WHEN purchase_type = 1 THEN
+                DATE_ADD(
+                    MAKEDATE(YEAR(date_purchased), DAY(date_purchased)),
+                    INTERVAL MONTH(date_purchased) + 2 MONTH
+                )
+            WHEN purchase_type = 2 THEN
+                DATE_ADD(
+                    MAKEDATE(YEAR(date_purchased), DAY(date_purchased)),
+                    INTERVAL MONTH(date_purchased) + 11 MONTH
+                )
+        END AS date_end,
+
+        date_refunded
+    FROM student_purchases
+) a;
+
+
+-- =========================================================
+-- Validation query
+-- Purpose:
+--   Inspect the derived purchase periods
+-- =========================================================
+SELECT *
+FROM purchases_info;
